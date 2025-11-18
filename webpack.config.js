@@ -58,6 +58,10 @@ module.exports = async (env, options) => {
             filename: "assets/[name][ext][query]",
           },
         },
+        {
+          test: /\.css$/,
+          use: ["style-loader", "css-loader"],
+        },
       ],
     },
     plugins: [
@@ -93,6 +97,10 @@ module.exports = async (env, options) => {
       new webpack.ProvidePlugin({
         Promise: ["es6-promise", "Promise"],
       }),
+      // new webpack.DefinePlugin({
+      //   "import.meta.env.SUPABASE_URL": JSON.stringify(import.meta.env.SUPABASE_URL || ""),
+      //   "import.meta.env.SUPABASE_PUBLISHABLE_KEY": JSON.stringify(import.meta.env.SUPABASE_PUBLISHABLE_KEY || ""),
+      // }),
     ],
     devServer: {
       hot: true,
