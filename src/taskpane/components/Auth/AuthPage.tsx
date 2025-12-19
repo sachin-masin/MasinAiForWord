@@ -26,14 +26,16 @@ const useStyles = makeStyles({
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: tokens.spacingVerticalXL,
     background: brandColors.getGradient("whiteToGreen", "diagonal"),
+    overflow: "hidden",
   },
   card: {
     width: "100%",
-    maxWidth: "500px",
+    maxWidth: "520px",
+    margin: "0 auto",
     backgroundColor: brandColors.offWhite,
-    boxShadow: `0 4px 20px rgba(35, 31, 32, 0.15)`,
+    boxShadow: `0 8px 36px rgba(35, 31, 32, 0.12)`,
+    borderRadius: tokens.borderRadiusMedium,
   },
   cardHeader: {
     textAlign: "center",
@@ -58,19 +60,23 @@ const useStyles = makeStyles({
   },
   inputWrapper: {
     position: "relative",
-  },
-  icon: {
-    position: "absolute",
-    left: tokens.spacingVerticalM,
-    top: "50%",
-    transform: "translateY(-50%)",
-    color: brandColors.darkGreen,
-    pointerEvents: "none",
+    width: "100%",
   },
   input: {
-    paddingLeft: "40px",
-    "&::placeholder": {
-      color: brandColors.gray,
+    width: "100%",
+    "& input": {
+      height: "44px",
+      borderRadius: tokens.borderRadiusMedium,
+      border: "1px solid rgba(0,0,0,0.06)",
+      boxShadow: "inset 0 1px 2px rgba(0,0,0,0.03)",
+      fontSize: tokens.fontSizeBase200,
+      backgroundColor: "#fff",
+      outline: "none",
+      width: "100%",
+      boxSizing: "border-box",
+      "&::placeholder": {
+        color: brandColors.gray,
+      },
     },
   },
   passwordToggle: {
@@ -96,16 +102,15 @@ const useStyles = makeStyles({
   },
   button: {
     width: "100%",
-    height: "44px",
+    height: "48px",
     fontSize: tokens.fontSizeBase500,
     fontWeight: 600,
-    backgroundColor: brandColors.darkGreen,
+    background: `linear-gradient(90deg, ${brandColors.darkGreen} 0%, ${brandColors.darkGreenSecondary} 100%)`,
     color: brandColors.offWhite,
+    borderRadius: tokens.borderRadiusMedium,
+    boxShadow: `0 6px 18px rgba(30, 90, 40, 0.12)`,
     "&:hover": {
-      backgroundColor: brandColors.darkGreenSecondary,
-    },
-    "&:active": {
-      backgroundColor: brandColors.darkGreen,
+      filter: "brightness(1.03)",
     },
   },
   label: {
@@ -198,14 +203,6 @@ export function AuthPage() {
             >
               <img src="assets/logo-filled.png" alt="MASIN Logo" className={styles.logo} />
             </div>
-            <div className={styles.welcomeText}>
-              <Text as="h2" size={600} weight="semibold" className={styles.welcomeHeading}>
-                Welcome
-              </Text>
-              <Text as="p" size={400} className={styles.welcomeSubtext}>
-                Sign in to your account
-              </Text>
-            </div>
             <form onSubmit={handleSignIn} className={styles.form}>
               {error && (
                 <div
@@ -227,10 +224,9 @@ export function AuthPage() {
 
               <div className={styles.inputContainer}>
                 <Label htmlFor="signin-email" required className={styles.label}>
-                  Email <span style={{ color: "#d32f2f" }}>*</span>
+                  Email:
                 </Label>
-                <div className={styles.inputWrapper}>
-                  <Mail24Regular className={styles.icon} />
+                <div className={styles.inputWrapper} style={{ width: "100%" }}>
                   <Input
                     id="signin-email"
                     name="email"
@@ -244,6 +240,7 @@ export function AuthPage() {
                     className={styles.input}
                     required
                     appearance={emailError ? "underline" : "outline"}
+                    style={{ width: "100%" }}
                   />
                 </div>
                 {emailError && <Text className={styles.errorText}>{emailError}</Text>}
@@ -251,10 +248,9 @@ export function AuthPage() {
 
               <div className={styles.inputContainer}>
                 <Label htmlFor="signin-password" required className={styles.label}>
-                  Password <span style={{ color: "#d32f2f" }}>*</span>
+                  Password:
                 </Label>
-                <div className={styles.inputWrapper}>
-                  <LockClosed24Regular className={styles.icon} />
+                <div className={styles.inputWrapper} style={{ width: "100%" }}>
                   <Input
                     id="signin-password"
                     name="password"
@@ -268,6 +264,7 @@ export function AuthPage() {
                     className={styles.input}
                     required
                     appearance={passwordError ? "underline" : "outline"}
+                    style={{ width: "100%" }}
                   />
                   <button
                     type="button"

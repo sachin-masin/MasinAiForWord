@@ -4,6 +4,8 @@ import { handleStreamingResponse, type StreamingResponse } from './streamingResp
 interface QueryApiOptions {
   question: string;
   sessionId?: string | null;
+  documentContext?: string | null;
+  selectedContentContext?: string | null;
   signal?: AbortSignal;
 }
 
@@ -32,7 +34,9 @@ export async function queryChatAPI(
     },
     body: JSON.stringify({
       question,
-      ...(sessionId && { session_id: sessionId })
+      ...(sessionId && { session_id: sessionId }),
+      ...(options.documentContext && { document_context: options.documentContext }),
+      ...(options.selectedContentContext && { selected_content_context: options.selectedContentContext }),
     }),
     ...(signal && { signal })
   });
@@ -41,7 +45,32 @@ export async function queryChatAPI(
     throw new Error(`API endpoint failed: ${response.statusText}`);
   }
 
-  // use handleStreamingResponse for /ask_stream
+  // use handleStreamingResponse for 
   await handleStreamingResponse(response, onUpdate, onComplete);
+}
+
+/**
+ * Upload local files to the backend `/upload` endpoint.
+ * Returns parsed JSON which should include `session_id` when successful.
+ */
+export async function uploadFiles(files: FileList): Promise<{ message: string; session_id?: string; status?: string }> {
+  const baseUrl = getBackendUrl();
+
+  const form = new FormData();
+  Array.from(files).forEach((file) => {
+    form.append('files', file, file.name);
+  });
+
+  const response = await fetch(`${baseUrl}/upload`, {
+    method: 'POST',
+    body: form,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upload failed: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data;
 }
 

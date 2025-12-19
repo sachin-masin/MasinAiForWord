@@ -9,11 +9,12 @@
     "module": "ES2020",
     "moduleResolution": "node",
     "noImplicitReturns": true,
-    "noUnusedParameters": true,
     "outDir": "dist",
     "removeComments": false,
     "sourceMap": true,
     "target": "es5",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "lib": [
       "es7",
       "dom"

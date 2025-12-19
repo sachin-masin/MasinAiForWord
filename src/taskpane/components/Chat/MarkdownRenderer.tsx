@@ -27,7 +27,7 @@ const useStyles = makeStyles({
       color: brandColors.black,
     },
     '& h1': {
-      fontSize: tokens.fontSizeHero700,
+      fontSize: tokens.fontSizeBase500,
       fontWeight: tokens.fontWeightBold,
       margin: `${tokens.spacingVerticalM} 0 ${tokens.spacingVerticalS} 0`,
       paddingBottom: tokens.spacingVerticalXS,
@@ -35,7 +35,7 @@ const useStyles = makeStyles({
       color: brandColors.black,
     },
     '& h2': {
-      fontSize: tokens.fontSizeHero700,
+      fontSize: tokens.fontSizeBase500,
       fontWeight: tokens.fontWeightSemibold,
       margin: `${tokens.spacingVerticalM} 0 ${tokens.spacingVerticalS} 0`,
       paddingBottom: tokens.spacingVerticalXS,
