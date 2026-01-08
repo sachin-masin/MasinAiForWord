@@ -13,6 +13,9 @@ async function getHttpsOptions() {
   return { ca: httpsOptions.ca, key: httpsOptions.key, cert: httpsOptions.cert };
 }
 
+const dotenv = require("dotenv");
+dotenv.config();
+
 module.exports = async (env, options) => {
   const dev = options.mode === "development";
   const config = {
@@ -31,6 +34,12 @@ module.exports = async (env, options) => {
     },
     resolve: {
       extensions: [".ts", ".tsx", ".html", ".js"],
+      fallback: {
+        process: require.resolve("process/browser"),
+      },
+      alias: {
+        process: "process/browser",
+      },
     },
     module: {
       rules: [
@@ -96,11 +105,17 @@ module.exports = async (env, options) => {
       }),
       new webpack.ProvidePlugin({
         Promise: ["es6-promise", "Promise"],
+        process: "process/browser",
       }),
-      // new webpack.DefinePlugin({
-      //   "import.meta.env.SUPABASE_URL": JSON.stringify(import.meta.env.SUPABASE_URL || ""),
-      //   "import.meta.env.SUPABASE_PUBLISHABLE_KEY": JSON.stringify(import.meta.env.SUPABASE_PUBLISHABLE_KEY || ""),
-      // }),
+      new webpack.DefinePlugin({
+        "import.meta.env": JSON.stringify({
+          SUPABASE_URL: process.env.SUPABASE_URL,
+          SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY,
+          MODE: options.mode,
+          DEV: dev,
+          PROD: !dev,
+        }),
+      }),
     ],
     devServer: {
       hot: true,

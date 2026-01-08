@@ -18,10 +18,12 @@ import {
   Person24Regular,
   Edit24Regular,
   Dismiss12Regular,
+  Check24Regular,
 } from "@fluentui/react-icons";
 import { useAuth } from "../Auth/AuthProvider";
 import { brandColors } from "../../theme/brandColors";
-import { queryChatAPI, uploadFiles } from "./utils/chatApi";
+import { queryChatAPI, uploadFiles, createConversation, postMessageToSession } from "./utils/chatApi";
+import { getConversation, addMessage } from "./utils/supabaseChatService";
 import { type StreamingResponse, type Citation } from "./utils/streamingResponseHandlers";
 import MasinAiAvatar from "./MasinAiAvatar";
 import { StreamingIndicator } from "./StreamingIndicator";
@@ -227,15 +229,22 @@ const useStyles = makeStyles({
   },
 });
 
-export const ChatInterface: React.FC = () => {
+export interface ChatInterfaceProps {
+  sessionId: string | null;
+  onSessionChange: (sid: string) => void;
+  onNewConversation: () => void;
+}
+
+export const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onSessionChange, onNewConversation }) => {
   const styles = useStyles();
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [documentId, setDocumentId] = useState<string | null>(null);
   const [streamingMessage, setStreamingMessage] = useState<Message | null>(null);
   const [mode, setMode] = useState<"draft" | "edit">("draft");
+  const [copied, setIsCopied] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<
     Array<{ name: string; type: string; size: number; content?: string }>
@@ -246,25 +255,106 @@ export const ChatInterface: React.FC = () => {
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [isAnyMessageStreaming, setIsAnyMessageStreaming] = useState(false);
 
-  // Track whether any message is currently streaming (used by input controls)
+  // Track whether any message is currently streaming
   useEffect(() => {
     setIsAnyMessageStreaming(Boolean(streamingMessage) || messages.some((m) => m.isStreaming));
-  }, [streamingMessage, messages.length]);
+  }, [streamingMessage, messages]);
+
+  const DEFAULT_MESSAGE: Message = {
+    id: "welcome-message",
+    role: "assistant",
+    content: "I am MasinAI! How can I assist you today?",
+    timestamp: new Date(),
+  };
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
+  useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    if (copied) {
+      timeout = setTimeout(() => setIsCopied(false), 2000);
+    }
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [copied]);
+
   // Focus textarea on mount
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
 
+  // Helper to get a stable document identifier for the current Word file.
+  const getDocumentIdentifier = useCallback(async (): Promise<string | null> => {
+    return new Promise((resolve) => {
+      try {
+        if (typeof Office !== "undefined" && Office.context && Office.context.document) {
+          Office.context.document.getFilePropertiesAsync((result: any) => {
+            try {
+              if (result && result.status === Office.AsyncResultStatus.Succeeded) {
+                const url = result.value && (result.value as any).url;
+                if (url && url.length > 0) {
+                  resolve(url);
+                  return;
+                }
+              }
+            } catch (e) {
+              console.warn("getFilePropertiesAsync parsing error", e);
+            }
+            resolve(null);
+          });
+        } else {
+          resolve(null);
+        }
+      } catch (e) {
+        console.warn("getDocumentIdentifier failed", e);
+        resolve(null);
+      }
+    });
+  }, []);
+
+  // Load existing mapping (and try to restore messages) on mount or session change
+  useEffect(() => {
+    (async () => {
+      const docId = await getDocumentIdentifier();
+      setDocumentId(docId);
+
+      if (sessionId) {
+        // Try to load conversation messages from Supabase
+        try {
+          const conv = await getConversation(sessionId);
+          if (conv && Array.isArray(conv.messages) && conv.messages.length > 0) {
+            const msgs = conv.messages.map((m: any) => ({
+              id: m.id || crypto.randomUUID(),
+              role: m.role === 'assistant' ? 'assistant' : (m.role === 'ai' ? 'assistant' : 'user'),
+              content: m.content || '',
+              sources: m.sources || [],
+              followUpQuestions: m.follow_up_questions || [],
+              timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+            } as Message));
+            setMessages(msgs);
+          } else {
+            // If no messages show default greeting or empty
+            setMessages([DEFAULT_MESSAGE]);
+          }
+        } catch (e) {
+          console.warn('Failed to restore conversation messages', e);
+          setMessages([DEFAULT_MESSAGE]);
+        }
+      } else {
+        // No sessionId in URL, though InitialRedirect should have handled this
+        setMessages([DEFAULT_MESSAGE]);
+      }
+    })();
+  }, [getDocumentIdentifier, sessionId]);
+
   const copyToClipboard = useCallback(async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      // You could add a toast notification here if needed
+      setIsCopied(true);
     } catch (error) {
       console.error("Failed to copy:", error);
     }
@@ -292,7 +382,7 @@ export const ChatInterface: React.FC = () => {
               }
             );
           } else {
-            // If Office API not available, try clipboard + paste fallback (best-effort)
+            // If Office API not available, try clipboard + paste fallback
             navigator.clipboard
               .writeText(text)
               .then(() => resolve())
@@ -308,7 +398,7 @@ export const ChatInterface: React.FC = () => {
     }
   }, []);
 
-  // Utility: get selected text (Office Common API)
+  // get selected text (Office Common API)
   const getSelectionText = useCallback((): Promise<string> => {
     return new Promise((resolve) => {
       try {
@@ -326,26 +416,24 @@ export const ChatInterface: React.FC = () => {
     });
   }, []);
 
-  // Utility: get full document text (Word JavaScript API). Falls back to empty string
-  // if Word API is not available or fails. Keep this operation guarded because
-  // it can be heavy for very large docs.
+  // get full document text (Word JavaScript API)
   const getFullDocumentText = useCallback(async (): Promise<string> => {
+    const MAX_CONTEXT_CHARS = 50000;
     try {
       // `Word` is available in Word-hosted taskpane contexts
       if (typeof (window as any).Word !== "undefined" && (window as any).Word.run) {
-        // Use Word.run to read the document body text
+        // Use Word.run to read document body text
         return await (window as any).Word.run(async (context: any) => {
           const body = context.document.body;
           body.load("text");
           await context.sync();
-          return body.text || "";
+          return body.text.slice(0, MAX_CONTEXT_CHARS) || "";
         });
       }
     } catch (e) {
-      console.warn("Word.run failed to get full document text", e);
+      console.warn("Failed to get full document text", e);
     }
 
-    // Fallback: return empty string when full document text cannot be obtained.
     return "";
   }, []);
 
@@ -383,6 +471,15 @@ export const ChatInterface: React.FC = () => {
     setMessages((prev) => [...prev, initialStreamingMessage]);
 
     try {
+      // Save user message to Supabase
+      if (sessionId) {
+        await addMessage({
+          conversationId: sessionId,
+          role: 'user',
+          content: userMessage.content,
+        });
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -425,8 +522,8 @@ export const ChatInterface: React.FC = () => {
               if (data.status !== undefined) {
                 updated.status = data.status;
               }
-              if (data.sessionId !== undefined) {
-                setSessionId(data.sessionId);
+              if (data.sessionId !== undefined && data.sessionId !== sessionId) {
+                onSessionChange(data.sessionId);
               }
 
               // Update the message in the messages array
@@ -440,7 +537,7 @@ export const ChatInterface: React.FC = () => {
           onComplete: async (data: StreamingResponse) => {
             clearTimeout(timeoutId);
 
-            const finalMessage: Message = {
+            const finalMessageBase: Message = {
               id: streamingMessageId,
               role: "assistant",
               content: data.answer || "No response received",
@@ -453,12 +550,28 @@ export const ChatInterface: React.FC = () => {
               isStreaming: false,
             };
 
-            if (data.sessionId) {
-              setSessionId(data.sessionId);
+            const sidToUse = data.sessionId || sessionId;
+            if (sidToUse && sidToUse !== sessionId) {
+              onSessionChange(sidToUse);
+            }
+
+            // Save assistant message to Supabase
+            if (sidToUse) {
+              try {
+                await addMessage({
+                  conversationId: sidToUse,
+                  role: 'assistant',
+                  content: finalMessageBase.content,
+                  sources: finalMessageBase.sources,
+                  followUpQuestions: finalMessageBase.followUpQuestions,
+                });
+              } catch (e) {
+                console.warn('Failed to save assistant message to Supabase', e);
+              }
             }
 
             setMessages((prevMessages) =>
-              prevMessages.map((msg) => (msg.id === streamingMessageId ? finalMessage : msg))
+              prevMessages.map((msg) => (msg.id === streamingMessageId ? finalMessageBase : msg))
             );
 
             setStreamingMessage(null);
@@ -494,6 +607,10 @@ export const ChatInterface: React.FC = () => {
       setIsLoading(false);
     }
   }, [input, isLoading, sessionId, streamingMessage, mode, insertTextAtCursor]);
+
+  const handleNewConversation = useCallback(() => {
+    onNewConversation();
+  }, [onNewConversation]);
 
   const handleFollowUpClick = useCallback((question: string) => {
     setInput(question);
@@ -580,8 +697,8 @@ export const ChatInterface: React.FC = () => {
       setUploadedFiles((prev) => [...prev, ...readResults]);
 
       const data = await uploadFiles(files);
-      if (data.session_id) {
-        setSessionId(data.session_id);
+      if (data.session_id && data.session_id !== sessionId) {
+        onSessionChange(data.session_id);
       }
     } catch (err) {
       console.error("Upload failed", err);
@@ -603,111 +720,130 @@ export const ChatInterface: React.FC = () => {
           <div className={styles.emptyState}>
             <MasinAiAvatar size={64} />
             <div className={styles.emptyStateText}>
-              <p>Hello! I'm MasinAI. How can I help you today?</p>
+              <p>How can I help you? I am MasinAI how can I assist you today?</p>
             </div>
+            <Button
+              appearance="primary"
+              onClick={handleNewConversation}
+              style={{ marginTop: tokens.spacingVerticalM }}
+            >
+              New Conversation
+            </Button>
           </div>
         ) : (
-          messages.map((message, index) => {
-            const isUser = message.role === "user";
-            const isLastMessage = index === messages.length - 1;
-            const hasFollowUps =
-              Array.isArray(message.followUpQuestions) && message.followUpQuestions.length > 0;
-            const showFollowUps = !isUser && isLastMessage && hasFollowUps && !message.isStreaming;
+          <>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: tokens.spacingHorizontalM, paddingTop: tokens.spacingVerticalS }}>
+              <Button
+                size="small"
+                appearance="subtle"
+                onClick={handleNewConversation}
+                icon={<Edit24Regular />}
+              >
+                New Conversation
+              </Button>
+            </div>
+            {messages.map((message, index) => {
+              const isUser = message.role === "user";
+              const isLastMessage = index === messages.length - 1;
+              const hasFollowUps =
+                Array.isArray(message.followUpQuestions) && message.followUpQuestions.length > 0;
+              const showFollowUps = !isUser && isLastMessage && hasFollowUps && !message.isStreaming;
 
-            return (
-              <div key={message.id}>
-                <div
-                  className={`${styles.messageWrapper} ${isUser ? styles.userMessageWrapper : styles.assistantMessageWrapper}`}
-                >
-                  {isUser ? (
-                    <></>
-                  ) : (
-                    <div style={{ minWidth: "24px", minHeight: "24px" }}>
-                      <MasinAiAvatar size={24} />
-                    </div>
-                  )}
-                  <div className={styles.messageContent}>
-                    <Card className={isUser ? styles.userMessageCard : styles.assistantMessageCard}>
-                      {!isUser && !message.isStreaming && (
-                        <Button
-                          className={styles.copyButton}
-                          icon={<Copy24Regular />}
-                          appearance="subtle"
-                          size="small"
-                          onClick={() => copyToClipboard(message.content)}
-                          title="Copy message"
-                        />
-                      )}
-
-                      {message.status && message.isStreaming && message.status.message && (
-                        <div className={styles.statusText}>{message.status.message}</div>
-                      )}
-
-                      {message.content && (
-                        <div
-                          className={styles.messageText}
-                          ref={(el) => setMessageRef(message.id, el)}
-                        >
-                          {isUser ? (
-                            <p style={{ color: "white", margin: 0 }}>{message.content}</p>
-                          ) : (
-                            <MarkdownRenderer content={message.content} />
-                          )}
-                        </div>
-                      )}
-
-                      {/* Draft-mode controls: allow applying selected or whole answer into the document */}
-                      {!isUser && !message.isStreaming && mode === "draft" && (
-                        <div
-                          style={{
-                            marginTop: tokens.spacingVerticalS,
-                            display: "flex",
-                            gap: tokens.spacingHorizontalS,
-                          }}
-                        >
-                          <Button
-                            size="small"
-                            appearance="primary"
-                            onClick={() => applySelectionToDocument(message.id, message.content)}
-                          >
-                            Apply selection
-                          </Button>
-                          <Button
-                            size="small"
-                            appearance="subtle"
-                            onClick={() => applyAllToDocument(message.content)}
-                          >
-                            Apply all
-                          </Button>
-                        </div>
-                      )}
-
-                      {message.isStreaming && (
-                        <div style={{ marginTop: tokens.spacingVerticalS }}>
-                          <StreamingIndicator size="sm" />
-                        </div>
-                      )}
-                    </Card>
-
-                    {showFollowUps && (
-                      <div className={styles.followUpContainer}>
-                        {message.followUpQuestions?.map((question, qIndex) => (
-                          <Button
-                            key={qIndex}
-                            className={styles.followUpButton}
-                            appearance="outline"
-                            onClick={() => handleFollowUpClick(question)}
-                          >
-                            {question}
-                          </Button>
-                        ))}
+              return (
+                <div key={message.id}>
+                  <div
+                    className={`${styles.messageWrapper} ${isUser ? styles.userMessageWrapper : styles.assistantMessageWrapper}`}
+                  >
+                    {isUser ? (
+                      <></>
+                    ) : (
+                      <div style={{ minWidth: "24px", minHeight: "24px" }}>
+                        <MasinAiAvatar size={24} />
                       </div>
                     )}
+                    <div className={styles.messageContent}>
+                      <Card className={isUser ? styles.userMessageCard : styles.assistantMessageCard}>
+                        {!isUser && !message.isStreaming && (
+                          <Button
+                            className={styles.copyButton}
+                            icon={copied ? <Check24Regular /> : <Copy24Regular />}
+                            appearance="subtle"
+                            size="small"
+                            onClick={() => copyToClipboard(message.content)}
+                            title="Copy message"
+                          />
+                        )}
+
+                        {message.status && message.isStreaming && message.status.message && (
+                          <div className={styles.statusText}>{message.status.message}</div>
+                        )}
+
+                        {message.content && (
+                          <div
+                            className={styles.messageText}
+                            ref={(el) => setMessageRef(message.id, el)}
+                          >
+                            {isUser ? (
+                              <p style={{ color: "white", margin: 0 }}>{message.content}</p>
+                            ) : (
+                              <MarkdownRenderer content={message.content} />
+                            )}
+                          </div>
+                        )}
+
+                        {/* Draft-mode controls: allow applying selected or whole answer into the document */}
+                        {!isUser && !message.isStreaming && mode === "draft" && messages.length > 1 && (
+                          <div
+                            style={{
+                              marginTop: tokens.spacingVerticalS,
+                              display: "flex",
+                              gap: tokens.spacingHorizontalS,
+                            }}
+                          >
+                            <Button
+                              size="small"
+                              appearance="primary"
+                              onClick={() => applySelectionToDocument(message.id, message.content)}
+                            >
+                              Apply selection
+                            </Button>
+                            <Button
+                              size="small"
+                              appearance="subtle"
+                              onClick={() => applyAllToDocument(message.content)}
+                            >
+                              Apply all
+                            </Button>
+                          </div>
+                        )}
+
+                        {message.isStreaming && (
+                          <div style={{ marginTop: tokens.spacingVerticalS }}>
+                            <StreamingIndicator size="sm" />
+                          </div>
+                        )}
+                      </Card>
+
+                      {showFollowUps && (
+                        <div className={styles.followUpContainer}>
+                          {message.followUpQuestions?.map((question, qIndex) => (
+                            <Button
+                              key={qIndex}
+                              className={styles.followUpButton}
+                              appearance="outline"
+                              onClick={() => handleFollowUpClick(question)}
+                            >
+                              {question}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -885,9 +1021,9 @@ export const ChatInterface: React.FC = () => {
                           setUploadedFiles((prev) => prev.filter((_, index) => index !== i));
                         }}
                         style={{
-                          position:"absolute",
-                          right:"4px",
-                          bottom:"10px",
+                          position: "absolute",
+                          right: "4px",
+                          bottom: "10px",
                           minWidth: 0,
                           padding: 0,
                           width: 10,
