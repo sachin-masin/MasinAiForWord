@@ -21,9 +21,9 @@ const useStyles = makeStyles({
     width: '100%',
     wordBreak: 'break-word',
     '& p': {
-      margin: `${tokens.spacingVerticalS} 0`,
-      fontSize: tokens.fontSizeBase400,
-      lineHeight: tokens.lineHeightBase400,
+      margin: `4px 0`,
+      fontSize: tokens.fontSizeBase300,
+      lineHeight: tokens.lineHeightBase300,
       color: brandColors.black,
     },
     '& h1': {
@@ -59,9 +59,9 @@ const useStyles = makeStyles({
       paddingLeft: tokens.spacingHorizontalL,
     },
     '& li': {
-      margin: `${tokens.spacingVerticalXS} 0`,
-      fontSize: tokens.fontSizeBase400,
-      lineHeight: tokens.lineHeightBase400,
+      margin: `2px 0`,
+      fontSize: tokens.fontSizeBase300,
+      lineHeight: tokens.lineHeightBase300,
       color: brandColors.black,
     },
     '& code': {
@@ -127,7 +127,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
 
   const cleanContent = (text: string): string => {
     if (!text) return text;
-    
+
     // Remove empty bullet points and markers
     return text
       .split('\n')

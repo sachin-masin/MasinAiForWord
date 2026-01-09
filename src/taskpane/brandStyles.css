@@ -1,0 +1,62 @@
+  /* Hide scrollbar by default globally */
+  html,
+  body,
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+
+  :root {
+    /* Primary Colors */
+    --brand-gray: #808286;
+    --brand-lime: #aad03e;
+    --brand-green: #317c3b;
+    --brand-off-white: #f8f6f4;
+
+    /* Secondary Colors */
+    --brand-black: #231f20;
+    --brand-light-gray: #c0bdb9;
+    --brand-dark-green: #006838;
+    --brand-gradient-green: #006658;
+    --brand-teal: #60c6c7;
+
+    /* Gradients */
+    --gradient-white-green: linear-gradient(135deg, #ffffff 0%, #006658 100%);
+    --gradient-dark-green: linear-gradient(135deg, #231f20 0%, #006838 100%);
+  }
+
+  .brand-bg-gradient {
+    background: var(--gradient-white-green);
+    min-height: 100vh;
+  }
+
+  .brand-sidebar-bg {
+    background-color: white;
+    border-right: 1px solid var(--brand-light-gray);
+  }
+
+  .brand-button-primary {
+    background-color: var(--brand-green);
+    color: white;
+  }
+
+  .brand-button-primary:hover {
+    background-color: var(--brand-dark-green);
+  }
+
+  .brand-text-main {
+    color: var(--brand-black);
+  }
+
+  .brand-text-secondary {
+    color: var(--brand-gray);
+  }

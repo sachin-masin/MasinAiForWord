@@ -2,16 +2,24 @@ import * as React from "react";
 import { AuthPage } from "./Auth/AuthPage";
 import { useAuth } from "./Auth/AuthProvider";
 import { makeStyles, Spinner } from "@fluentui/react-components";
-import { ChatInterface } from "./Chat/ChatInterface";
-import { postMessageToSession } from "./Chat/utils/chatApi";
-import { createConversation, getConversation, getLatestConversation } from "./Chat/utils/supabaseChatService";
+import { Layout } from "./Layout";
+import { HomeView } from "./HomeView";
+import { ChatView } from "./ChatView";
+import {
+  createConversation,
+  getConversation,
+  addMessage,
+} from "./Chat/utils/supabaseChatService";
+import { queryChatAPI, uploadFiles } from "./Chat/utils/chatApi";
+import { Citation, StreamingResponse } from "./Chat/utils/streamingResponseHandlers";
 import { useCallback, useEffect, useState } from "react";
+import { supabase } from "../../integrations/supabase/client";
 
 interface AppProps {
   title: string;
 }
 
-type View = "LOADING" | "LOGIN" | "CHAT" | "CREATING_CONVERSATION";
+type View = "LOADING" | "LOGIN" | "HOME" | "CHAT" | "CREATING_CONVERSATION";
 
 const useStyles = makeStyles({
   root: { minHeight: "100vh" },
@@ -24,17 +32,22 @@ const useStyles = makeStyles({
     gap: "16px",
     padding: "20px",
     textAlign: "center"
-  },
-  creatingTitle: {
-    fontSize: "18px",
-    fontWeight: "600",
-    color: "#231f20"
-  },
-  creatingText: {
-    fontSize: "14px",
-    color: "#666"
   }
 });
+
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: Citation[];
+  followUpQuestions?: string[];
+  timestamp: Date;
+  isStreaming?: boolean;
+  status?: {
+    status: string;
+    message?: string;
+  };
+}
 
 const App: React.FC<AppProps> = () => {
   const styles = useStyles();
@@ -42,16 +55,21 @@ const App: React.FC<AppProps> = () => {
   const [view, setView] = useState<View>("LOADING");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [docId, setDocId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [recentQueries, setRecentQueries] = useState<Array<{ id: string, title: string }>>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [currentChatTitle, setCurrentChatTitle] = useState("New Conversation");
+  const [mode, setMode] = useState<"draft" | "edit">("draft");
+  const [stagedFiles, setStagedFiles] = useState<Array<{ name: string; id: string }>>([]);
+  const [recentLoading, setRecentLoading] = useState<boolean>(false);
 
+  // Office API helpers
   const getDocumentIdentifier = useCallback(async (): Promise<string | null> => {
     return new Promise((resolve) => {
       try {
         if (typeof Office !== "undefined" && Office.context?.document) {
           Office.context.document.getFilePropertiesAsync((result: any) => {
-            if (
-              result?.status === Office.AsyncResultStatus.Succeeded &&
-              result.value?.url
-            ) {
+            if (result?.status === Office.AsyncResultStatus.Succeeded && result.value?.url) {
               resolve(result.value.url);
             } else {
               resolve(null);
@@ -66,135 +84,295 @@ const App: React.FC<AppProps> = () => {
     });
   }, []);
 
-  const syncToLocalStorage = useCallback((sid: string, messages: any[]) => {
-    const STORAGE_KEY = 'masin_chat_history';
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      let sessions = stored ? JSON.parse(stored) : [];
-
-      const sessionIndex = sessions.findIndex((s: any) => s.id === sid);
-      const sessionData = {
-        id: sid,
-        title: 'Word Conversation',
-        messages: messages.map(m => ({
-          id: m.id || crypto.randomUUID(),
-          content: m.content || '',
-          role: m.role === 'assistant' ? 'assistant' : m.role,
-          timestamp: m.created_at || new Date().toISOString(),
-          sources: m.sources || [],
-          followUpQuestions: m.follow_up_questions || []
-        })),
-        updatedAt: new Date().toISOString(),
-        createdAt: sessions[sessionIndex]?.createdAt || new Date().toISOString(),
-        source: 'word_plugin'
-      };
-
-      if (sessionIndex !== -1) {
-        sessions[sessionIndex] = sessionData;
-      } else {
-        sessions.unshift(sessionData);
+  const getSelectionText = useCallback((): Promise<string> => {
+    return new Promise((resolve) => {
+      try {
+        Office.context.document.getSelectedDataAsync(Office.CoercionType.Text, (result: any) => {
+          if (result && result.status === Office.AsyncResultStatus.Succeeded) {
+            resolve(result.value || "");
+          } else {
+            resolve("");
+          }
+        });
+      } catch (e) {
+        resolve("");
       }
+    });
+  }, []);
 
-      if (sessions.length > 50) sessions = sessions.slice(0, 50);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+  const insertTextAtCursor = useCallback(async (text: string) => {
+    try {
+      if (typeof Office !== "undefined" && Office.context?.document) {
+        return new Promise<void>((resolve) => {
+          Office.context.document.setSelectedDataAsync(
+            text,
+            { coercionType: Office.CoercionType.Text },
+            (result: any) => {
+              if (result.status === Office.AsyncResultStatus.Succeeded) {
+                resolve();
+              } else {
+                console.warn("setSelectedDataAsync failed", result.error);
+                resolve();
+              }
+            }
+          );
+        });
+      } else {
+        // Fallback to clipboard + manual paste or alert
+        console.warn("Office API not available for insertion");
+        await navigator.clipboard.writeText(text);
+        return;
+      }
     } catch (e) {
-      console.error('Failed to sync to masin_chat_history', e);
+      console.warn("insertTextAtCursor error", e);
     }
   }, []);
 
+  const getFullDocumentText = useCallback(async (): Promise<string> => {
+    try {
+      if (typeof (window as any).Word !== "undefined" && (window as any).Word.run) {
+        return await (window as any).Word.run(async (context: any) => {
+          const body = context.document.body;
+          body.load("text");
+          await context.sync();
+          return body.text.slice(0, 15000) || "";
+        });
+      }
+    } catch (e) {
+      console.warn("Full doc text failed", e);
+    }
+    return "";
+  }, []);
+
+  // Fetch recent queries from Supabase
+  const fetchRecentQueries = useCallback(async () => {
+    if (!user) return;
+    setRecentLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('id, title')
+        .eq('user_id', user.id)
+        .eq('source', 'word_plugin')
+        .order('updated_at', { ascending: false })
+        .limit(5);
+
+      if (data) {
+        setRecentQueries(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch recent queries", e);
+    } finally {
+      setRecentLoading(false);
+    }
+  }, [user]);
+
+  // Initialize session logic
   const initializeSession = useCallback(async (forceNew = false) => {
     if (!user) return;
 
     const freshDocId = await getDocumentIdentifier();
     setDocId(freshDocId);
-    let sid: string | null = null;
 
-    if (freshDocId && !forceNew) {
-      sid = localStorage.getItem(`word_session_${freshDocId}`);
+    // In the new UI, we show Home view first if not forced into a specific chat
+    if (!forceNew) {
+      fetchRecentQueries();
+      setView("HOME");
+      return;
     }
 
-    // If no doc-specific mapping, try to fetch the user's latest conversation
-    if (!sid && !forceNew) {
-      try {
-        const latest = await getLatestConversation(user.id);
-        if (latest) {
-          sid = latest.id;
-          if (freshDocId) {
-            localStorage.setItem(`word_session_${freshDocId}`, sid);
-          }
-        }
-      } catch (e) {
-        console.warn('Failed to fetch latest conversation on initialization', e);
-      }
-    }
-
-    if (!sid || forceNew) {
-      setView("CREATING_CONVERSATION");
-      try {
-        const conv = await createConversation({
-          title: `${user.id}-${new Date().toISOString()}`,
-          source: "word_plugin",
-          documentSessionId: freshDocId || undefined,
-          userId: user.id
-        });
-        sid = conv?.id ?? null;
-
-        if (sid) {
-          if (freshDocId) {
-            localStorage.setItem(`word_session_${freshDocId}`, sid);
-          }
-
-          setSessionId(sid);
-          syncToLocalStorage(sid, []);
-          setView("CHAT");
-        } else {
-          setView("CHAT");
-        }
-      } catch (error) {
-        console.error("Failed to create conversation:", error);
-        setView("CHAT");
-      }
-    } else {
-      try {
-        const fullConv = await getConversation(sid);
-        syncToLocalStorage(sid, fullConv?.messages || []);
-      } catch (e) {
-        console.warn('Failed to sync existing session', e);
-      }
-      setSessionId(sid);
+    // If forceNew is true, we just clear current chat state and go to CHAT
+    if (forceNew) {
+      setSessionId(null);
+      setCurrentChatTitle("New Conversation");
+      setMessages([]);
+      setStagedFiles([]);
       setView("CHAT");
+      return;
     }
-  }, [getDocumentIdentifier, syncToLocalStorage, user]);
+
+    fetchRecentQueries();
+    setView("HOME");
+  }, [getDocumentIdentifier, user, fetchRecentQueries]);
 
   useEffect(() => {
     if (authLoading) return;
-
     if (!user) {
       setView("LOGIN");
       return;
     }
-
     if (view === "LOADING" || view === "LOGIN") {
       initializeSession();
     }
   }, [user, authLoading, view, initializeSession]);
 
-  const handleSessionChange = useCallback((newSessionId: string) => {
-    setSessionId(newSessionId);
+  const loadConversation = useCallback(async (sid: string) => {
+    try {
+      const conv = await getConversation(sid);
+      if (conv) {
+        setSessionId(sid);
+        setCurrentChatTitle(conv.title);
+        const msgs = (conv.messages || []).map((m: any) => ({
+          id: m.id || crypto.randomUUID(),
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content || '',
+          timestamp: m.created_at ? new Date(m.created_at) : new Date(),
+        } as Message));
+        setMessages(msgs);
+        setView("CHAT");
+      }
+    } catch (e) {
+      console.error("Load conversation failed", e);
+    }
+  }, []);
 
-    // Persist mapping if we have a docId
-    if (docId) {
-      localStorage.setItem(`word_session_${docId}`, newSessionId);
+  const handleSendMessage = useCallback(async (input: string) => {
+    if (!input.trim() || isStreaming) return;
+
+    let activeSessionId = sessionId;
+
+    // If we're on Home or have no sessionId, create a session on first message
+    if (view === "HOME" || !activeSessionId) {
+      const freshDocId = await getDocumentIdentifier();
+      const title = input.slice(0, 50);
+      const conv = await createConversation({
+        title: title,
+        source: "word_plugin",
+        documentSessionId: freshDocId || undefined,
+        userId: user!.id
+      });
+      if (conv?.id) {
+        activeSessionId = conv.id;
+        setSessionId(activeSessionId);
+        setCurrentChatTitle(conv.title);
+        setMessages([]);
+        setView("CHAT");
+      } else {
+        return;
+      }
     }
 
-    getConversation(newSessionId).then(fullConv => {
-      syncToLocalStorage(newSessionId, fullConv?.messages || []);
-    }).catch(e => console.warn('Failed to sync changed session', e));
-  }, [docId, syncToLocalStorage]);
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: input.trim(),
+      timestamp: new Date(),
+    };
 
-  const handleNewConversation = useCallback(() => {
-    initializeSession(true);
-  }, [initializeSession]);
+    setMessages((prev) => [...prev, userMessage]);
+    setIsStreaming(true);
+
+    const streamingMessageId = crypto.randomUUID();
+    const initialStreamingMessage: Message = {
+      id: streamingMessageId,
+      role: "assistant",
+      content: "",
+      timestamp: new Date(),
+      isStreaming: true
+    };
+    setMessages((prev) => [...prev, initialStreamingMessage]);
+
+    try {
+      await addMessage({
+        conversationId: activeSessionId,
+        role: 'user',
+        content: userMessage.content,
+      });
+
+      const [selectedText, fullDocText] = await Promise.all([
+        getSelectionText(),
+        getFullDocumentText(),
+      ]);
+
+      // Format previous_context as the last 2 messages
+      const lastTwoMessages = messages.slice(-2).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+      const previousContext = JSON.stringify(lastTwoMessages);
+
+      await queryChatAPI(
+        {
+          question: userMessage.content,
+          documentContext: fullDocText,
+          selectedContentContext: selectedText,
+          modelName: "gpt-5.2",
+          documentIds: stagedFiles.map(f => f.id),
+          previousContext: previousContext
+        },
+        {
+          onUpdate: (data: Partial<StreamingResponse>) => {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === streamingMessageId
+                  ? { ...msg, content: data.answer || msg.content }
+                  : msg
+              )
+            );
+          },
+          onComplete: async (data: StreamingResponse) => {
+            setIsStreaming(false);
+            setStagedFiles([]);
+
+            // If in edit mode, insert to document
+            if (mode === "edit" && data.answer) {
+              await insertTextAtCursor(data.answer);
+            }
+
+            await addMessage({
+              conversationId: activeSessionId!,
+              role: 'assistant',
+              content: data.answer || "",
+            });
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === streamingMessageId
+                  ? { ...msg, content: data.answer || msg.content, isStreaming: false }
+                  : msg
+              )
+            );
+          },
+        }
+      );
+    } catch (error) {
+      setIsStreaming(false);
+      setMessages((prev) => [
+        ...prev.filter(m => m.id !== streamingMessageId),
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Sorry, I encountered an error. Please try again.",
+          timestamp: new Date()
+        }
+      ]);
+    }
+  }, [view, sessionId, isStreaming, user, getDocumentIdentifier, getSelectionText, getFullDocumentText, stagedFiles, mode, messages, insertTextAtCursor]);
+
+  const handleUpload = async (files: FileList) => {
+    try {
+      const data = await uploadFiles(files);
+      if (data.doc_ids) {
+        const fileArray = Array.from(files);
+        const newStaged = data.doc_ids.map((id, index) => ({
+          name: fileArray[index]?.name || "Unknown file",
+          id: id
+        }));
+        setStagedFiles(prev => [...prev, ...newStaged]);
+      }
+      return data;
+    } catch (e) {
+      console.error("Upload failed", e);
+      throw e;
+    }
+  };
+
+  const handleRemoveStagedFile = (index: number) => {
+    setStagedFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleModeToggle = () => {
+    setMode(prev => prev === "draft" ? "edit" : "draft");
+  };
 
   if (authLoading || (user && view === "LOADING")) {
     return (
@@ -206,19 +384,53 @@ const App: React.FC<AppProps> = () => {
 
   return (
     <div className={styles.root}>
-      {view === "LOGIN" && <AuthPage />}
-      {view === "CREATING_CONVERSATION" && (
-        <div className={styles.loadingContainer}>
-          <Spinner size="large" />
-          <div className={styles.creatingTitle}>Creating conversation...</div>
-        </div>
-      )}
-      {view === "CHAT" && (
-        <ChatInterface
-          sessionId={sessionId}
-          onSessionChange={handleSessionChange}
-          onNewConversation={handleNewConversation}
-        />
+      {view === "LOGIN" ? (
+        <AuthPage />
+      ) : (
+        <Layout
+          onNewConversation={() => initializeSession(true)}
+          onSettingsClick={() => console.log('Settings clicked')}
+          onHelpClick={() => window.open("https://masin.ai/help-masinai/", "_blank")}
+        >
+          {view === "CREATING_CONVERSATION" && (
+            <div className={styles.loadingContainer}>
+              <Spinner size="large" label="Creating conversation..." />
+            </div>
+          )}
+          {view === "HOME" && (
+            <HomeView
+              onSendMessage={handleSendMessage}
+              onUploadClick={handleUpload}
+              onModeToggle={handleModeToggle}
+              recentQueries={recentQueries}
+              recentLoading={recentLoading}
+              onRecentQueryClick={loadConversation}
+              mode={mode}
+              stagedFiles={stagedFiles}
+              onRemoveStagedFile={handleRemoveStagedFile}
+            />
+          )}
+          {view === "CHAT" && (
+            <ChatView
+              title={currentChatTitle}
+              messages={messages}
+              onBack={() => {
+                setView("HOME");
+                fetchRecentQueries();
+              }}
+              onSendMessage={handleSendMessage}
+              onUploadClick={handleUpload}
+              onModeToggle={handleModeToggle}
+              isStreaming={isStreaming}
+              mode={mode}
+              user={user}
+              onApplySelection={insertTextAtCursor}
+              onApplyAll={insertTextAtCursor}
+              stagedFiles={stagedFiles}
+              onRemoveStagedFile={handleRemoveStagedFile}
+            />
+          )}
+        </Layout>
       )}
     </div>
   );

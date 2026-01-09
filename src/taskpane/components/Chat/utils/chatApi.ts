@@ -3,10 +3,11 @@ import { handleStreamingResponse, type StreamingResponse } from './streamingResp
 
 interface QueryApiOptions {
   question: string;
-  sessionId?: string | null;
   documentContext?: string | null;
   selectedContentContext?: string | null;
-  signal?: AbortSignal;
+  modelName?: string;
+  documentIds?: string[];
+  previousContext?: string;
 }
 
 interface StreamingCallbacks {
@@ -21,7 +22,7 @@ export async function queryChatAPI(
   options: QueryApiOptions,
   callbacks: StreamingCallbacks
 ): Promise<void> {
-  const { question, sessionId, signal } = options;
+  const { question } = options;
   const { onUpdate, onComplete } = callbacks;
 
   const baseUrl = getBackendUrl();
@@ -34,13 +35,13 @@ export async function queryChatAPI(
     },
     body: JSON.stringify({
       question,
-      ...(sessionId && { session_id: sessionId }),
-      // indicate this request is coming from the Word add-in
+      model_name: options.modelName || 'gpt-5.2',
+      document_ids: options.documentIds || [],
+      previous_context: options.previousContext || '[]',
       source: 'word_plugin',
       ...(options.documentContext && { document_context: options.documentContext }),
       ...(options.selectedContentContext && { selected_content_context: options.selectedContentContext }),
     }),
-    ...(signal && { signal })
   });
 
   if (!response.ok) {
@@ -54,7 +55,7 @@ export async function queryChatAPI(
 /**
  * Upload local files to the backend `/upload` endpoint.
  */
-export async function uploadFiles(files: FileList): Promise<{ message: string; session_id?: string; status?: string }> {
+export async function uploadFiles(files: FileList): Promise<{ message: string; session_id?: string; doc_ids?: string[]; status?: string }> {
   const baseUrl = getBackendUrl();
 
   const form = new FormData();
@@ -76,7 +77,7 @@ export async function uploadFiles(files: FileList): Promise<{ message: string; s
 }
 
 /**
- * @deprecated The backend now supports implicit conversation creation via `/ask_stream`.
+ * The backend now supports implicit conversation creation via `/ask_stream`.
  * Use this only if explicit creation is required for specific flows.
  */
 export async function createConversation(opts?: { title?: string; documentSessionId?: string; source?: string; }): Promise<{ session_id?: string }> {
@@ -106,18 +107,3 @@ export async function getConversation(sessionId: string): Promise<any> {
   if (!res.ok) throw new Error(`Get conversation failed: ${res.statusText}`);
   return await res.json();
 }
-
-/**
- * @deprecated backend creates messages implicitly during /ask_stream.
- */
-export async function postMessageToSession(sessionId: string, message: { role: string; content: string }): Promise<any> {
-  const baseUrl = getBackendUrl();
-  const res = await fetch(`${baseUrl}/conversations/${encodeURIComponent(sessionId)}/messages`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: message.role, content: message.content }),
-  });
-  if (!res.ok) throw new Error(`Post message failed: ${res.statusText}`);
-  return await res.json();
-}
-

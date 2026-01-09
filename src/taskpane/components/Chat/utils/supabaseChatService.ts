@@ -128,25 +128,3 @@ export async function getConversation(conversationId: string): Promise<SupabaseC
 
     return { ...conversation, messages } as SupabaseConversation;
 }
-
-/**
- * Fetches the latest conversation for a given user.
- */
-export async function getLatestConversation(userId: string): Promise<SupabaseConversation | null> {
-    const { data: conversation, error: convError } = await supabase
-        .from('conversations')
-        .select('*')
-        .eq('user_id', userId)
-        .order('updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-    if (convError) {
-        console.error('Error fetching latest conversation from Supabase:', convError);
-        return null;
-    }
-
-    if (!conversation) return null;
-
-    return await getConversation(conversation.id);
-}

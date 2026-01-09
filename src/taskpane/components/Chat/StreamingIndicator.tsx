@@ -8,6 +8,11 @@ interface StreamingIndicatorProps {
 }
 
 const useStyles = makeStyles({
+  "@keyframes bounce": {
+    "0%": { transform: 'translateY(0)', opacity: 0.6 },
+    "50%": { transform: 'translateY(-6px)', opacity: 1 },
+    "100%": { transform: 'translateY(0)', opacity: 0.6 },
+  },
   container: {
     display: 'flex',
     alignItems: 'center',
@@ -15,22 +20,14 @@ const useStyles = makeStyles({
   },
   dotsContainer: {
     display: 'flex',
-    gap: '4px',
+    gap: '6px',
+    alignItems: 'flex-end'
   },
   dot: {
     borderRadius: '50%',
     backgroundColor: brandColors.darkGreen,
-    animationName: {
-      '0%, 100%': {
-        transform: 'translateY(0)',
-        opacity: 0.7,
-      },
-      '50%': {
-        transform: 'translateY(-8px)',
-        opacity: 1,
-      },
-    },
-    animationDuration: '1.4s',
+    animationName: 'bounce',
+    animationDuration: '1.2s',
     animationIterationCount: 'infinite',
     animationTimingFunction: 'ease-in-out',
   },
@@ -47,10 +44,10 @@ const useStyles = makeStyles({
     height: '10px',
   },
   dotDelay1: {
-    animationDelay: '0.1s',
+    animationDelay: '0.08s',
   },
   dotDelay2: {
-    animationDelay: '0.2s',
+    animationDelay: '0.16s',
   },
 });
 

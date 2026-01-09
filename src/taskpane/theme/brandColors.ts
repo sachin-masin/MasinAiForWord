@@ -1,30 +1,3 @@
-/**
- * Brand Colors - Global Color Palette
- * 
- * 
- * // Usage in makeStyles
- * const useStyles = makeStyles({
- *   container: {
- *     backgroundColor: brandColors.offWhite,
- *     color: brandColors.black,
- *   },
- *   button: {
- *     backgroundColor: brandColors.darkGreen,
- *     '&:hover': {
- *       backgroundColor: brandColors.darkGreenSecondary,
- *     },
- *   },
- *   background: {
- *     background: brandColors.getGradient('whiteToGreen', 'diagonal'),
- *   },
- * });
- * 
- * // Usage in inline styles
- * <div style={{ backgroundColor: brandColors.limeGreen }}>
- *   Content
- * </div>
- */
-
 export const brandColors = {
   // Primary Colors
   gray: "#808286",
@@ -35,8 +8,8 @@ export const brandColors = {
   // Secondary Colors
   black: "#231f20",
   lightGray: "#c0bdb9",
-  darkGreenSecondary: "#006838", 
-  gradientGreen: "#006658", 
+  darkGreenSecondary: "#006838",
+  gradientGreen: "#006658",
 
   // Gradients
   gradients: {
